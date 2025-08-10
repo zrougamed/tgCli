@@ -1,0 +1,286 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v0.1.1'
+
+env:
+  GO_VERSION: '1.24'
+  BINARY_NAME: 'tg'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            platform: linux-amd64
+          - goos: linux
+            goarch: arm64
+            platform: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            platform: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            platform: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            platform: windows-amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            platform: windows-arm64
+            ext: .exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          echo "Building version: $VERSION"
+          echo "Platform: ${{ matrix.platform }}"
+          echo "GOOS: $GOOS, GOARCH: $GOARCH"
+          
+          LDFLAGS="-X 'github.com/zrougamed/tgCli/pkg/constants.VERSION_CLI=${VERSION#v}' -s -w"
+          
+          mkdir -p build
+          
+          # Check if main.go exists
+          if [ ! -f "./cmd/main.go" ]; then
+            echo "ERROR: ./cmd/main.go not found"
+            echo "Current directory contents:"
+            ls -la
+            echo "Looking for Go files:"
+            find . -name "*.go" -type f | head -10
+            exit 1
+          fi
+          
+          echo "Building binary..."
+          go build \
+            -ldflags="${LDFLAGS}" \
+            -o build/${{ env.BINARY_NAME }}-${{ steps.version.outputs.VERSION }}-${{ matrix.platform }}${{ matrix.ext }} \
+            ./cmd/main.go
+          
+          echo "Build completed. Contents of build directory:"
+          ls -la build/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.VERSION }}-${{ matrix.platform }}
+          path: build/
+
+  release:
+    name: Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          
+          # Check if artifacts directory exists
+          if [ ! -d "artifacts" ]; then
+            echo "No artifacts directory found. Checking current directory..."
+            ls -la
+            echo "ERROR: Build artifacts were not downloaded properly"
+            exit 1
+          fi
+          
+          # List what we actually have
+          echo "Available artifacts:"
+          ls -la artifacts/
+          
+          # Process each artifact directory
+          for dir in artifacts/*/; do
+            if [ ! -d "$dir" ]; then
+              echo "No artifact directories found"
+              continue
+            fi
+            
+            echo "Processing directory: $dir"
+            dir_name=$(basename "$dir")
+            platform_name=${dir_name#${{ env.BINARY_NAME }}-${{ steps.version.outputs.VERSION }}-}
+            
+            echo "Contents of $dir:"
+            ls -la "$dir"
+            
+            # Find the binary file
+            binary_file=$(find "$dir" -name "${{ env.BINARY_NAME }}-${{ steps.version.outputs.VERSION }}-*" -type f)
+            if [ -z "$binary_file" ]; then
+              echo "No binary found in $dir"
+              continue
+            fi
+            
+            echo "Found binary: $binary_file"
+            
+            # Create archives from the current directory, not from within the artifact dir
+            if [[ $platform_name == *"windows"* ]]; then
+              # Create ZIP for Windows
+              (cd "$dir" && zip -r "../../release/${{ env.BINARY_NAME }}-${{ steps.version.outputs.VERSION }}-${platform_name}.zip" .)
+            else
+              # Create tar.gz for Unix-like systems  
+              (cd "$dir" && tar -czf "../../release/${{ env.BINARY_NAME }}-${{ steps.version.outputs.VERSION }}-${platform_name}.tar.gz" .)
+            fi
+          done
+          
+          # Check if we created any release files
+          if [ ! "$(ls -A release/)" ]; then
+            echo "ERROR: No release files were created"
+            exit 1
+          fi
+          
+          echo "Created release files:"
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cat > release_notes.md << EOF
+          # TigerGraph CLI ${VERSION}
+          
+          ## Features
+          - Comprehensive TigerGraph Cloud management
+          - Interactive GSQL terminal support
+          - Server operations and backup functionality
+          - Multi-platform support (Windows, macOS, Linux)
+          
+          ## Installation
+          
+          ### Linux/macOS
+          \`\`\`bash
+          # Download and extract
+          curl -L "https://github.com/zrougamed/tgCli/releases/download/${VERSION}/tg-${VERSION}-linux-amd64.tar.gz" | tar xz
+          
+          # Make executable and move to PATH
+          chmod +x tg
+          sudo mv tg /usr/local/bin/
+          \`\`\`
+          
+          ### Windows
+          Download the \`.zip\` file, extract it, and add the \`tg.exe\` to your PATH.
+          
+          ## Usage
+          \`\`\`bash
+          # Check version
+          tg version
+          
+          # Login to TigerGraph Cloud
+          tg cloud login
+          
+          # List cloud instances
+          tg cloud list
+          
+          # Get help
+          tg --help
+          \`\`\`
+          
+          ## Supported Platforms
+          - Linux (AMD64, ARM64)
+          - macOS (Intel, Apple Silicon)
+          - Windows (AMD64, ARM64)
+          
+          ## Bug Reports
+          Please report issues at: https://github.com/zrougamed/tgCli/issues
+          EOF
+          
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.VERSION }}
+          name: "TigerGraph CLI ${{ steps.version.outputs.VERSION }}"
+          body: ${{ steps.release_notes.outputs.RELEASE_NOTES }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          artifacts: "release/*"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-')
+    steps:
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew Formula
+        run: |
+          echo "Homebrew formula update would go here"
+          echo "Version: ${{ steps.version.outputs.VERSION }}"
