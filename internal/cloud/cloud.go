@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -66,7 +66,7 @@ func RunLogin(cmd *cobra.Command, args []string) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Error reading response: %v\n", err)
 		return
@@ -86,7 +86,7 @@ func RunLogin(cmd *cobra.Command, args []string) {
 				bearerToken := tokenParts[1]
 
 				// Save token to file
-				if err := ioutil.WriteFile(constants.CredsFile, []byte(bearerToken), 0600); err != nil {
+				if err := os.WriteFile(constants.CredsFile, []byte(bearerToken), 0600); err != nil {
 					fmt.Printf("Error saving credentials: %v\n", err)
 					return
 				}
@@ -164,7 +164,7 @@ func RunList(cmd *cobra.Command, args []string) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Error reading response: %v\n", err)
 		return
@@ -245,7 +245,7 @@ func performMachineOperation(action, machineID string) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Error reading response: %v\n", err)
 		return
@@ -266,7 +266,7 @@ func performMachineOperation(action, machineID string) {
 }
 
 func getBearerToken() (string, error) {
-	data, err := ioutil.ReadFile(constants.CredsFile)
+	data, err := os.ReadFile(constants.CredsFile)
 	if err != nil {
 		return "", fmt.Errorf("bearer token not found, please login first")
 	}

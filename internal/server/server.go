@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -130,7 +130,7 @@ func (s *GSQLSession) attemptLogin(version string) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func RunBackup(cmd *cobra.Command, args []string) {
 			} `json:"results"`
 		}
 
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		if err := json.Unmarshal(body, &logResp); err == nil && !logResp.Error && len(logResp.Results) > 0 {
 			parts := strings.Split(logResp.Results[0].Path, "/log/")
 			if len(parts) > 0 {
@@ -405,7 +405,7 @@ func RunServices(cmd *cobra.Command, args []string) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		var serviceResp struct {
 			Message string `json:"message"`
 		}
