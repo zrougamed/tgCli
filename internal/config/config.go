@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -279,7 +279,7 @@ func RunConfTGCloud(cmd *cobra.Command, args []string) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Error reading response: %v\n", err)
 		return
@@ -298,7 +298,7 @@ func RunConfTGCloud(cmd *cobra.Command, args []string) {
 			if len(tokenParts) >= 2 {
 				bearerToken := tokenParts[1]
 
-				if err := ioutil.WriteFile(constants.CredsFile, []byte(bearerToken), 0600); err != nil {
+				if err := os.WriteFile(constants.CredsFile, []byte(bearerToken), 0600); err != nil {
 					fmt.Printf("Error saving credentials: %v\n", err)
 					return
 				}
